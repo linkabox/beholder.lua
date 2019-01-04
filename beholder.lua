@@ -25,7 +25,7 @@ local nodesById = nil
 local root = nil
 
 local function newNode()
-  return { callbacks = {}, children = setmetatable({}, {__mode="k"}) }
+  return { once_callbacks = {}, callbacks = {}, children = setmetatable({}, {__mode="k"}) }
 end
 
 
@@ -46,17 +46,29 @@ local function findOrCreateDescendantNode(self, keys)
   return node
 end
 
-local function invokeNodeCallbacks(self, params)
+local function invokeNodeCallbacks(self, ...)
   -- copy the hash into an array, for safety (self-erasures)
-  local callbacks, count = hash2array(self.callbacks)
-  for i=1,#callbacks do
-    callbacks[i](unpack(params))
+  
+--  local callbacks, count = hash2array(self.callbacks)
+--  for i=1,#callbacks do
+--    callbacks[i](...)
+--  end
+  local count = 0
+  for k,v in pairs(self.callbacks) do
+    v(...)
+    count = count + 1
+  end
+  
+  for k,v in pairs(self.once_callbacks) do
+    v(...)
+    self.once_callbacks[k] = nil
+    count = count + 1
   end
   return count
 end
 
 local function invokeAllNodeCallbacksInSubTree(self, params)
-  local counter = invokeNodeCallbacks(self, params)
+  local counter = invokeNodeCallbacks(self, table.unpack(params))
   for _,child in pairs(self.children) do
     counter = counter + invokeAllNodeCallbacksInSubTree(child, params)
   end
@@ -66,21 +78,25 @@ end
 local function invokeNodeCallbacksFromPath(self, path)
   local node = self
   local params = copy(path)
-  local counter = invokeNodeCallbacks(node, params)
+  local counter = invokeNodeCallbacks(node, table.unpack(params))
 
   for i=1, #path do
     node = node.children[path[i]]
     if not node then break end
     table.remove(params, 1)
-    counter = counter + invokeNodeCallbacks(node, params)
+    counter = counter + invokeNodeCallbacks(node, table.unpack(params))
   end
 
   return counter
 end
 
-local function addCallbackToNode(self, callback)
+local function addCallbackToNode(self, callback, once)
   local id = {}
-  self.callbacks[id] = callback
+  if once then
+    self.once_callbacks[id] = callback
+  else
+    self.callbacks[id] = callback
+  end
   nodesById[id] = self
   return id
 end
@@ -130,6 +146,12 @@ end
 
 
 ------ Public interface
+
+function beholder.observeOnce(...)
+  local event, callback = extractEventAndCallbackFromParams({...})
+  local node = findOrCreateDescendantNode(root, event)
+  return addIdToCurrentGroup(addCallbackToNode(node, callback, true))
+end
 
 function beholder.observe(...)
   local event, callback = extractEventAndCallbackFromParams({...})
